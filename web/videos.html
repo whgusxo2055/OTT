@@ -34,8 +34,8 @@
     <script>
         checkAuth();
         
-        const username = localStorage.getItem('username');
-        document.getElementById('welcomeMsg').textContent = username ? username + '님' : '';
+        const displayName = localStorage.getItem('displayName') || localStorage.getItem('username');
+        document.getElementById('welcomeMsg').textContent = displayName ? displayName + '님' : '';
         
         let currentPage = 1;
         const pageSize = 12;

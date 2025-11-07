@@ -53,9 +53,12 @@
                 });
                 
                 if (response.ok) {
-                    // Store credentials in localStorage (for demo purposes)
+                    const data = await response.json();
+                    
+                    // Store credentials and user info in localStorage
                     localStorage.setItem('authCredentials', credentials);
                     localStorage.setItem('username', username);
+                    localStorage.setItem('displayName', data.user.displayName);
                     
                     // Redirect to videos page
                     window.location.href = '/videos.html';
