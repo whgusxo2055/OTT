@@ -6,6 +6,7 @@
 ott_server
 add_video
 server-c/src/*.o
+*.md
 
 # Database
 *.db
