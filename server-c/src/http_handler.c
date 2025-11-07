@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "civetweb.h"
 #include "cJSON.h"
 #include "http_handler.h"
@@ -400,10 +401,22 @@ int http_server_init(void) {
 }
 
 int http_server_start(void) {
+    // 절대 경로로 document_root 설정
+    char web_dir_abs[1024];
+    char *cwd = getcwd(NULL, 0);
+    if (cwd == NULL) {
+        log_error("현재 디렉터리 경로를 가져올 수 없습니다");
+        return -1;
+    }
+    snprintf(web_dir_abs, sizeof(web_dir_abs), "%s/%s", cwd, WEB_DIR);
+    free(cwd);
+    
+    log_info("웹 디렉터리: %s", web_dir_abs);
+    
     const char *options[] = {
         "listening_ports", SERVER_PORT,
         "num_threads", "4",
-        "document_root", WEB_DIR,
+        "document_root", web_dir_abs,
         NULL
     };
     
