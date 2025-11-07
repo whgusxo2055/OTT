@@ -1,0 +1,38 @@
+# Compiled files
+*.o
+*.so
+*.a
+*.dylib
+ott_server
+server-c/src/*.o
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Dependencies
+third_party/
+
+# Media files
+media/videos/*
+!media/videos/.gitkeep
+media/thumbnails/*
+!media/thumbnails/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Config (keep example)
+config.ini
+!config.example.ini

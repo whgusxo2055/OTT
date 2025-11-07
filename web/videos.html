@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTT 스트리밍 - 동영상 목록</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <h1 class="logo">OTT 스트리밍</h1>
+            <div class="nav-right">
+                <span id="welcomeMsg"></span>
+                <button onclick="logout()" class="btn btn-secondary">로그아웃</button>
+            </div>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <div class="search-bar">
+            <input type="text" id="searchInput" placeholder="동영상 검색...">
+            <button onclick="searchVideos()" class="btn btn-primary">검색</button>
+        </div>
+        
+        <div id="videoGrid" class="video-grid">
+            <div class="loading">로딩 중...</div>
+        </div>
+        
+        <div id="pagination" class="pagination"></div>
+    </div>
+    
+    <script src="/assets/app.js"></script>
+    <script>
+        checkAuth();
+        
+        const username = localStorage.getItem('username');
+        document.getElementById('welcomeMsg').textContent = username ? username + '님' : '';
+        
+        let currentPage = 1;
+        const pageSize = 12;
+        
+        async function loadVideos(page = 1, query = '') {
+            try {
+                const credentials = localStorage.getItem('authCredentials');
+                let url = `/api/videos?page=${page}&pageSize=${pageSize}`;
+                if (query) {
+                    url += `&query=${encodeURIComponent(query)}`;
+                }
+                
+                const response = await fetch(url, {
+                    headers: {
+                        'Authorization': 'Basic ' + credentials
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to load videos');
+                }
+                
+                const data = await response.json();
+                displayVideos(data.items);
+                displayPagination(data.page, data.pageSize, data.total);
+            } catch (error) {
+                console.error('Error loading videos:', error);
+                document.getElementById('videoGrid').innerHTML = 
+                    '<div class="error">동영상을 불러오는데 실패했습니다.</div>';
+            }
+        }
+        
+        function displayVideos(videos) {
+            const grid = document.getElementById('videoGrid');
+            
+            if (videos.length === 0) {
+                grid.innerHTML = '<div class="no-results">검색 결과가 없습니다.</div>';
+                return;
+            }
+            
+            grid.innerHTML = videos.map(video => `
+                <div class="video-card" onclick="playVideo('${video.id}')">
+                    <div class="thumbnail">
+                        <img src="${video.thumbnailUrl}" alt="${video.title}" 
+                             onerror="this.src='/assets/placeholder.jpg'">
+                        <div class="duration">${formatDuration(video.durationSec)}</div>
+                    </div>
+                    <div class="video-info">
+                        <h3>${escapeHtml(video.title)}</h3>
+                        <p>${escapeHtml(video.description || '')}</p>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function displayPagination(page, pageSize, total) {
+            const totalPages = Math.ceil(total / pageSize);
+            const pagination = document.getElementById('pagination');
+            
+            if (totalPages <= 1) {
+                pagination.innerHTML = '';
+                return;
+            }
+            
+            let html = '';
+            
+            if (page > 1) {
+                html += `<button onclick="loadVideos(${page - 1})" class="btn">이전</button>`;
+            }
+            
+            html += `<span class="page-info">페이지 ${page} / ${totalPages}</span>`;
+            
+            if (page < totalPages) {
+                html += `<button onclick="loadVideos(${page + 1})" class="btn">다음</button>`;
+            }
+            
+            pagination.innerHTML = html;
+        }
+        
+        function searchVideos() {
+            const query = document.getElementById('searchInput').value;
+            loadVideos(1, query);
+        }
+        
+        function playVideo(videoId) {
+            window.location.href = `/player.html?id=${videoId}`;
+        }
+        
+        function logout() {
+            localStorage.removeItem('authCredentials');
+            localStorage.removeItem('username');
+            window.location.href = '/';
+        }
+        
+        // Load videos on page load
+        loadVideos();
+        
+        // Search on Enter key
+        document.getElementById('searchInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                searchVideos();
+            }
+        });
+    </script>
+</body>
+</html>

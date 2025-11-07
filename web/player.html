@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTT 스트리밍 - 재생</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <h1 class="logo"><a href="/videos.html">OTT 스트리밍</a></h1>
+            <div class="nav-right">
+                <button onclick="goBack()" class="btn btn-secondary">목록으로</button>
+            </div>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <div class="player-container">
+            <h2 id="videoTitle">로딩 중...</h2>
+            <video id="videoPlayer" controls></video>
+            <div id="videoDescription" class="video-description"></div>
+        </div>
+    </div>
+    
+    <!-- Resume modal -->
+    <div id="resumeModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>이어보기</h3>
+            <p>이전에 시청한 위치부터 재생하시겠습니까?</p>
+            <p class="resume-time">마지막 시청 위치: <span id="lastPosition"></span></p>
+            <div class="modal-buttons">
+                <button onclick="resumePlayback()" class="btn btn-primary">이어보기</button>
+                <button onclick="startFromBeginning()" class="btn btn-secondary">처음부터</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/assets/app.js"></script>
+    <script>
+        checkAuth();
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        const videoId = urlParams.get('id');
+        
+        if (!videoId) {
+            alert('잘못된 접근입니다.');
+            window.location.href = '/videos.html';
+        }
+        
+        const videoPlayer = document.getElementById('videoPlayer');
+        let lastSavedPosition = 0;
+        let watchHistory = null;
+        
+        async function loadVideo() {
+            try {
+                const credentials = localStorage.getItem('authCredentials');
+                
+                // Load video details
+                const response = await fetch(`/api/videos/${videoId}`, {
+                    headers: {
+                        'Authorization': 'Basic ' + credentials
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to load video');
+                }
+                
+                const video = await response.json();
+                document.getElementById('videoTitle').textContent = video.title;
+                document.getElementById('videoDescription').textContent = video.description || '';
+                
+                // Set video source
+                videoPlayer.src = `/api/videos/${videoId}/stream`;
+                
+                // Load watch history
+                await loadWatchHistory();
+                
+            } catch (error) {
+                console.error('Error loading video:', error);
+                alert('동영상을 불러오는데 실패했습니다.');
+                window.location.href = '/videos.html';
+            }
+        }
+        
+        async function loadWatchHistory() {
+            try {
+                const credentials = localStorage.getItem('authCredentials');
+                const response = await fetch(`/api/users/me/history?videoId=${videoId}`, {
+                    headers: {
+                        'Authorization': 'Basic ' + credentials
+                    }
+                });
+                
+                if (response.ok) {
+                    watchHistory = await response.json();
+                    if (watchHistory.lastPositionSec > 5) {
+                        showResumeModal(watchHistory.lastPositionSec);
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading watch history:', error);
+            }
+        }
+        
+        function showResumeModal(position) {
+            document.getElementById('lastPosition').textContent = formatDuration(position);
+            document.getElementById('resumeModal').style.display = 'flex';
+        }
+        
+        function resumePlayback() {
+            if (watchHistory) {
+                videoPlayer.currentTime = watchHistory.lastPositionSec;
+            }
+            document.getElementById('resumeModal').style.display = 'none';
+            videoPlayer.play();
+        }
+        
+        function startFromBeginning() {
+            videoPlayer.currentTime = 0;
+            document.getElementById('resumeModal').style.display = 'none';
+            videoPlayer.play();
+        }
+        
+        // Save progress periodically
+        let saveProgressTimer = null;
+        
+        videoPlayer.addEventListener('timeupdate', () => {
+            const currentTime = Math.floor(videoPlayer.currentTime);
+            
+            // Save every 5 seconds
+            if (currentTime - lastSavedPosition >= 5) {
+                lastSavedPosition = currentTime;
+                saveProgress(currentTime);
+            }
+        });
+        
+        videoPlayer.addEventListener('ended', () => {
+            saveProgress(Math.floor(videoPlayer.duration), true);
+        });
+        
+        async function saveProgress(position, completed = false) {
+            try {
+                const credentials = localStorage.getItem('authCredentials');
+                await fetch(`/api/videos/${videoId}/progress`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Basic ' + credentials,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        positionSec: position,
+                        completed: completed
+                    })
+                });
+            } catch (error) {
+                console.error('Error saving progress:', error);
+            }
+        }
+        
+        function goBack() {
+            window.location.href = '/videos.html';
+        }
+        
+        // Load video on page load
+        loadVideo();
+        
+        // Save progress before leaving
+        window.addEventListener('beforeunload', () => {
+            if (videoPlayer.currentTime > 0) {
+                saveProgress(Math.floor(videoPlayer.currentTime));
+            }
+        });
+    </script>
+</body>
+</html>
