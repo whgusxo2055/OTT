@@ -65,10 +65,10 @@ fi
 # Generate thumbnail
 echo "🖼️  썸네일 생성 중..."
 THUMB_PATH="../media/thumbnails/${VIDEO_UUID}.jpg"
-ACTUAL_VIDEO_PATH="./media/videos/${VIDEO_FILENAME}"
-ffmpeg -ss 1 -i "$ACTUAL_VIDEO_PATH" -vframes 1 -vf scale=320:-1 "./media/thumbnails/${VIDEO_UUID}.jpg" -y 2>&1 > /dev/null
+ACTUAL_VIDEO_PATH="../media/videos/${VIDEO_FILENAME}"
+ffmpeg -ss 1 -i "$ACTUAL_VIDEO_PATH" -vframes 1 -vf scale=320:-1 -update 1 "../media/thumbnails/${VIDEO_UUID}.jpg" -y 2>&1 > /dev/null
 
-ACTUAL_THUMB_PATH="./media/thumbnails/${VIDEO_UUID}.jpg"
+ACTUAL_THUMB_PATH="../media/thumbnails/${VIDEO_UUID}.jpg"
 if [ -f "$ACTUAL_THUMB_PATH" ]; then
     THUMB_UUID=$(uuidgen | tr '[:upper:]' '[:lower:]')
     sqlite3 app.db <<EOF

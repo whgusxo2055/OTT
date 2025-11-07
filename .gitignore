@@ -4,6 +4,7 @@
 *.a
 *.dylib
 ott_server
+add_video
 server-c/src/*.o
 
 # Database
@@ -36,3 +37,17 @@ media/thumbnails/*
 # Config (keep example)
 config.ini
 !config.example.ini
+
+# Documentation and temporary files
+docs/
+
+# Test files
+*test*
+*Test*
+*TEST*
+
+# Prompt and development files
+*.prompt
+*.prompt.md
+PROMPT*.md
+prompt*.md

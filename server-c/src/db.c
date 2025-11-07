@@ -258,17 +258,22 @@ int db_list_videos(int page, int page_size, video_t **videos, int *count, int *t
     while (sqlite3_step(stmt) == SQLITE_ROW && i < *count) {
         video_t *v = &(*videos)[i];
         strncpy(v->id, (const char*)sqlite3_column_text(stmt, 0), sizeof(v->id) - 1);
+        v->id[sizeof(v->id) - 1] = '\0';
+        
         strncpy(v->title, (const char*)sqlite3_column_text(stmt, 1), sizeof(v->title) - 1);
+        v->title[sizeof(v->title) - 1] = '\0';
         
         const char *desc = (const char*)sqlite3_column_text(stmt, 2);
         if (desc) {
             strncpy(v->description, desc, sizeof(v->description) - 1);
+            v->description[sizeof(v->description) - 1] = '\0';
         } else {
             v->description[0] = '\0';
         }
         
         v->duration_sec = sqlite3_column_int(stmt, 3);
         strncpy(v->mime_type, (const char*)sqlite3_column_text(stmt, 4), sizeof(v->mime_type) - 1);
+        v->mime_type[sizeof(v->mime_type) - 1] = '\0';
         i++;
     }
     
@@ -295,9 +300,58 @@ int db_search_videos(const char *query, int page, int page_size, video_t **video
     }
     sqlite3_finalize(count_stmt);
     
-    // Get results (simplified - similar to list_videos)
+    // Get paginated search results
+    const char *sql = "SELECT id, title, description, duration_sec, mime_type FROM videos WHERE title LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    sqlite3_stmt *stmt;
+    
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        db_release_connection(db);
+        return -1;
+    }
+    
+    int offset = (page - 1) * page_size;
+    sqlite3_bind_text(stmt, 1, search_pattern, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 2, page_size);
+    sqlite3_bind_int(stmt, 3, offset);
+    
+    // Count results
+    *count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        (*count)++;
+    }
+    sqlite3_reset(stmt);
+    
+    // Allocate array
+    *videos = malloc(sizeof(video_t) * (*count));
+    
+    // Fill results
+    int i = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW && i < *count) {
+        video_t *v = &(*videos)[i];
+        strncpy(v->id, (const char*)sqlite3_column_text(stmt, 0), sizeof(v->id) - 1);
+        v->id[sizeof(v->id) - 1] = '\0';
+        
+        strncpy(v->title, (const char*)sqlite3_column_text(stmt, 1), sizeof(v->title) - 1);
+        v->title[sizeof(v->title) - 1] = '\0';
+        
+        const char *desc = (const char*)sqlite3_column_text(stmt, 2);
+        if (desc) {
+            strncpy(v->description, desc, sizeof(v->description) - 1);
+            v->description[sizeof(v->description) - 1] = '\0';
+        } else {
+            v->description[0] = '\0';
+        }
+        
+        v->duration_sec = sqlite3_column_int(stmt, 3);
+        strncpy(v->mime_type, (const char*)sqlite3_column_text(stmt, 4), sizeof(v->mime_type) - 1);
+        v->mime_type[sizeof(v->mime_type) - 1] = '\0';
+        i++;
+    }
+    
+    sqlite3_finalize(stmt);
     db_release_connection(db);
-    return db_list_videos(page, page_size, videos, count, total);
+    return 0;
 }
 
 // Video file operations

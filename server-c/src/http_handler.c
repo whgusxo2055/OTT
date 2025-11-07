@@ -197,8 +197,37 @@ int handle_video_thumbnail(struct mg_connection *conn, void *cbdata) {
         return 1;
     }
     
+    // Convert relative path to absolute path
+    char abs_path[512];
+    if (thumbnail.file_path[0] == '/') {
+        // Already absolute
+        strncpy(abs_path, thumbnail.file_path, sizeof(abs_path) - 1);
+    } else {
+        // Relative path - resolve it
+        char cwd[256];
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
+            snprintf(abs_path, sizeof(abs_path), "%s/%s", cwd, thumbnail.file_path);
+        } else {
+            log_error("getcwd 실패");
+            mg_send_http_error(conn, 500, "Internal server error");
+            return 1;
+        }
+    }
+    abs_path[sizeof(abs_path) - 1] = '\0';
+    
+    log_debug("썸네일 파일 전송: %s", abs_path);
+    
+    // Check if file exists
+    FILE *fp = fopen(abs_path, "rb");
+    if (fp == NULL) {
+        log_error("썸네일 파일을 열 수 없음: %s", abs_path);
+        mg_send_http_error(conn, 404, "Thumbnail file not found");
+        return 1;
+    }
+    fclose(fp);
+    
     // Send thumbnail file
-    mg_send_file(conn, thumbnail.file_path);
+    mg_send_file(conn, abs_path);
     return 1;
 }
 
