@@ -14,8 +14,13 @@ LIBS = -lsqlite3 -lsodium -lm
 
 # Source files
 SRC_DIR = src
-SRC = $(wildcard $(SRC_DIR)/*.c)
-OBJ = $(SRC:.c=.o)
+MAIN_SRC = $(SRC_DIR)/main.c
+ADD_VIDEO_TOOL_SRC = $(SRC_DIR)/add_video_tool.c
+COMMON_SRC = $(filter-out $(MAIN_SRC) $(ADD_VIDEO_TOOL_SRC), $(wildcard $(SRC_DIR)/*.c))
+
+MAIN_OBJ = $(MAIN_SRC:.c=.o)
+ADD_VIDEO_TOOL_OBJ = $(ADD_VIDEO_TOOL_SRC:.c=.o)
+COMMON_OBJ = $(COMMON_SRC:.c=.o)
 
 # CivetWeb
 CIVETWEB_DIR = third_party/civetweb
@@ -30,19 +35,29 @@ CJSON_OBJ = $(CJSON_SRC:.c=.o)
 
 # Target
 TARGET = ott_server
+ADD_VIDEO_TOOL = add_video
 
 # All objects
-ALL_OBJ = $(OBJ) $(CIVETWEB_OBJ) $(CJSON_OBJ)
+SERVER_OBJ = $(MAIN_OBJ) $(COMMON_OBJ) $(CIVETWEB_OBJ) $(CJSON_OBJ)
+TOOL_OBJ = $(ADD_VIDEO_TOOL_OBJ) $(COMMON_OBJ) $(CIVETWEB_OBJ) $(CJSON_OBJ)
 
-.PHONY: all clean run db-init db-reset deps test help
+.PHONY: all clean run db-init db-reset deps test help tools
 
-all: deps $(TARGET)
+all: deps $(TARGET) tools
+
+tools: $(ADD_VIDEO_TOOL)
 
 # Build main executable
-$(TARGET): $(ALL_OBJ)
+$(TARGET): $(SERVER_OBJ)
 	@echo "Linking $(TARGET)..."
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(ALL_OBJ) $(LIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SERVER_OBJ) $(LIBS)
 	@echo "Build complete: $(TARGET)"
+
+# Build add_video tool
+$(ADD_VIDEO_TOOL): $(TOOL_OBJ)
+	@echo "Linking $(ADD_VIDEO_TOOL)..."
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(TOOL_OBJ) $(LIBS)
+	@echo "Build complete: $(ADD_VIDEO_TOOL)"
 
 # Compile C files
 %.o: %.c
@@ -90,7 +105,7 @@ run: all
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	@rm -f $(SRC_DIR)/*.o $(TARGET)
+	@rm -f $(SRC_DIR)/*.o $(TARGET) $(ADD_VIDEO_TOOL)
 	@rm -f $(CIVETWEB_OBJ) $(CJSON_OBJ)
 	@echo "Clean complete."
 

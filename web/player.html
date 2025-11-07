@@ -72,8 +72,20 @@
                 document.getElementById('videoTitle').textContent = video.title;
                 document.getElementById('videoDescription').textContent = video.description || '';
                 
-                // Set video source
-                videoPlayer.src = `/api/videos/${videoId}/stream`;
+                // Fetch video with authentication and create blob URL
+                const videoResponse = await fetch(`/api/videos/${videoId}/stream`, {
+                    headers: {
+                        'Authorization': 'Basic ' + credentials
+                    }
+                });
+                
+                if (!videoResponse.ok) {
+                    throw new Error('Failed to load video stream');
+                }
+                
+                const blob = await videoResponse.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                videoPlayer.src = blobUrl;
                 
                 // Load watch history
                 await loadWatchHistory();
