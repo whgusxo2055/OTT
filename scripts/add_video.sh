@@ -35,10 +35,10 @@ FILE_SIZE=$(stat -f%z "$VIDEO_FILE" 2>/dev/null || stat -c%s "$VIDEO_FILE" 2>/de
 
 # Copy video file to media directory
 VIDEO_FILENAME="${VIDEO_UUID}.mp4"
-VIDEO_PATH="./media/videos/${VIDEO_FILENAME}"
+VIDEO_PATH="../media/videos/${VIDEO_FILENAME}"
 
 echo "📁 비디오 파일 복사 중..."
-cp "$VIDEO_FILE" "$VIDEO_PATH"
+cp "$VIDEO_FILE" "./media/videos/${VIDEO_FILENAME}"
 
 if [ $? -ne 0 ]; then
     echo "❌ 비디오 파일 복사 실패"
@@ -65,9 +65,11 @@ fi
 # Generate thumbnail
 echo "🖼️  썸네일 생성 중..."
 THUMB_PATH="../media/thumbnails/${VIDEO_UUID}.jpg"
-ffmpeg -ss 5 -i "$VIDEO_PATH" -vframes 1 -vf scale=320:-1 "$THUMB_PATH" -y 2>&1 > /dev/null
+ACTUAL_VIDEO_PATH="./media/videos/${VIDEO_FILENAME}"
+ffmpeg -ss 1 -i "$ACTUAL_VIDEO_PATH" -vframes 1 -vf scale=320:-1 "./media/thumbnails/${VIDEO_UUID}.jpg" -y 2>&1 > /dev/null
 
-if [ -f "$THUMB_PATH" ]; then
+ACTUAL_THUMB_PATH="./media/thumbnails/${VIDEO_UUID}.jpg"
+if [ -f "$ACTUAL_THUMB_PATH" ]; then
     THUMB_UUID=$(uuidgen | tr '[:upper:]' '[:lower:]')
     sqlite3 app.db <<EOF
 INSERT INTO thumbnails (id, video_id, file_path, width, height)
