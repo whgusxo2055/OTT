@@ -46,11 +46,20 @@ int main(int argc, char *argv[]) {
 }
 EOF
 
-# Compile the utility
-clang -o /tmp/hash_password /tmp/hash_password.c -lsodium
+# Get libsodium paths from Homebrew
+BREW_PREFIX=$(brew --prefix 2>/dev/null || echo "/opt/homebrew")
+SODIUM_PREFIX="$BREW_PREFIX/opt/libsodium"
+
+# Compile the utility with proper include and library paths
+clang -o /tmp/hash_password /tmp/hash_password.c \
+    -I"$SODIUM_PREFIX/include" \
+    -L"$SODIUM_PREFIX/lib" \
+    -lsodium
 
 if [ $? -ne 0 ]; then
     echo "❌ 비밀번호 해시 유틸리티 컴파일 실패"
+    echo "   libsodium 경로: $SODIUM_PREFIX"
+    echo "   libsodium이 설치되어 있는지 확인하세요: brew install libsodium"
     exit 1
 fi
 
