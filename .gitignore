@@ -6,7 +6,10 @@
 ott_server
 add_video
 server-c/src/*.o
+
+# Markdown files (except README.md)
 *.md
+!README.md
 
 # Database
 *.db
