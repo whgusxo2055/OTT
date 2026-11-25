@@ -1,0 +1,11 @@
+**/target/
+**/.idea/
+*.iml
+.DS_Store
+.env
+.env.*
+!.env.example
+streaming-server/media/
+node_modules/
+__pycache__/
+metadata.csv

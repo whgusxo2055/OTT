@@ -1,0 +1,23 @@
+# 값은 프로젝트 폴더의 .env (환경 변수)에서 읽는다. run.sh가 .env를 불러온 뒤 실행한다.
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: always          # 오류 응답에 안내 문구 포함
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ott}
+    username: ${DB_USER:ott}
+    password: ${DB_PASSWORD:}
+  web:
+    resources:
+      # 목업(정적 파일)을 같은 서버에서 제공한다 → http://서버주소:8080/
+      static-locations: file:${MOCKUP_DIR:../mockup/dist}/
+
+storage:
+  endpoint: ${NCP_ENDPOINT:https://kr.object.ncloudstorage.com}
+  region: ${NCP_REGION:kr-standard}
+  bucket: ${NCP_BUCKET:acme}
+  access-key: ${NCP_ACCESS_KEY}
+  secret-key: ${NCP_SECRET_KEY}
+  poster-url-ttl-minutes: ${POSTER_URL_TTL_MINUTES:${PLAYBACK_URL_TTL_MINUTES:60}}
