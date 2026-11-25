@@ -39,9 +39,74 @@ async function loadCms(){
   do{const res=await fetch(`${CMS_API}/api/contents?page=${page++}&size=500`);if(!res.ok)throw new Error('HTTP '+res.status);data=await res.json();items.push(...data.items);}while(data.hasNext);
   cms.contents=items.map(fromCms);
  }catch(e){cms.contents=null;console.warn('CMS 연결 실패',e);toast('CMS에 연결하지 못해 내장 샘플 데이터로 표시합니다.');}
- cms.loading=false;render();
+ cms.loading=false;await refreshState().catch(error=>toast(error.message));render();
 }
 // ----------------------------------------------------------------------------------------------
+const stateViews = new Map();
+let writes = Promise.resolve();
+function stateActor() {
+  return window.STATE_API_BASE != null && cms.contents && ['a','b'].includes(db.current) ? db.current : null;
+}
+function stateView(actor) {
+  if (!stateViews.has(actor)) stateViews.set(actor, {watchlist: [], history: {}, recent: []});
+  return stateViews.get(actor);
+}
+function viewingUser() {
+  return stateActor() ? stateView(stateActor()) : user();
+}
+async function stateRequest(token, path, options = {}) {
+  if (!token) throw new Error('시연 회원 토큰을 입력해 주세요.');
+  const response = await fetch(window.STATE_API_BASE + '/api/v1/me' + path, {
+    ...options, headers: {Authorization: 'Bearer ' + token, ...options.headers}
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error?.message || '회원 상태 요청에 실패했습니다.');
+  }
+  return response.status === 204 ? null : response.json();
+}
+function memberToken(actor) { return sessionStorage.getItem('ott-token-' + actor); }
+async function authorizeActor(actor) {
+  if (window.STATE_API_BASE == null || !['a','b'].includes(actor)) return true;
+  const token = memberToken(actor) || window.prompt('회원 ' + actor.toUpperCase() + '의 시연 토큰을 입력하세요.');
+  try {
+    const identity = await stateRequest(token, '');
+    const expected = '00000000-0000-0000-0000-00000000000' + (actor === 'a' ? '1' : '2');
+    if (identity.memberId !== expected) throw new Error('선택한 회원의 토큰을 입력하세요.');
+    sessionStorage.setItem('ott-token-' + actor, token);
+    return true;
+  } catch (error) {
+    sessionStorage.removeItem('ott-token-' + actor);
+    toast(error.message);
+    return false;
+  }
+}
+async function refreshState() {
+  const actor = stateActor();
+  if (!actor || !memberToken(actor)) return;
+  const token = memberToken(actor);
+  const [saved, continuing] = await Promise.all([
+    stateRequest(token, '/watchlist'), stateRequest(token, '/continue-watching')
+  ]);
+  stateViews.set(actor, {
+    watchlist: saved.items.map(item => item.contentId),
+    recent: continuing.items.map(item => item.contentId),
+    history: Object.fromEntries(continuing.items.map(item => [item.contentId, item.resumePositionMs / 1000]))
+  });
+}
+function enqueue(work) {
+  writes = writes.then(work).catch(error => toast(error.message));
+  return writes;
+}
+function refreshOutsidePlayer() {
+  if (!location.hash.startsWith('#player/')) render();
+}
+function refreshAfterLogin() {
+  return enqueue(async () => {
+    await refreshState();
+    refreshOutsidePlayer();
+  });
+}
 let demoActor='new',editTab='basic',myTab='watchlist',catalogLimit=10,searchState={q:'',type:'all',genre:'all'},liveChannel='ch1',selectedEpisode=null,player={content:null,position:0,playing:false,speed:1,quality:'자동',subtitle:'한국어',volume:.7},playTimer=null,returnFocus=null;
 const now=()=>new Date().toLocaleString('ko-KR',{hour12:false}),uid=prefix=>prefix+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,6);
 function audit(type,target,before,after){db.logs.unshift({actor:user()?.nickname||'시연 관리자',time:now(),type,target,before,after,result:'성공'});persist();}
@@ -56,7 +121,7 @@ const empty=(title,body,action='')=>`<div class="empty"><h3>${esc(title)}</h3><p
 function nav(active='home'){return `<header class="nav"><a href="#home" class="brand">OTT <span>PROJECT</span></a><nav class="navlinks" aria-label="주 메뉴">${[['home','홈'],['search','탐색·검색'],['my','내 콘텐츠'],['live','라이브']].map(([p,n])=>`<a class="navlink ${active===p?'active':''}" href="#${p}">${n}</a>`).join('')}</nav><div class="navuser">${user()?`<span class="avatar">${esc(user().nickname[0])}</span><a class="user-name" href="#my">${esc(user().nickname)}</a>${isAdmin()?'<a class="btn small" href="#admin/contents">관리</a>':''}`:`<a href="#login" class="btn small">로그인</a>`}</div></header>`;}
 function footer(){return `<footer class="footer"><span>OTT PROJECT · 학교·전시 프로젝트 UI 검토본</span><span>자체 샘플 작품 · 실제 소셜 인증·스트리밍 서비스 아님${memoryOnly?' · 저장 제한: 현재 창에서만 유지':''}</span></footer>`;}
 function demoBar(){return `<aside class="demo-bar" aria-label="목업 시연 도구"><span class="demo-dot"></span><span>클릭형 목업</span><button data-act="demo">시연 도구</button><button data-act="help" class="optional">안내</button></aside>`;}
-function card(c,progress=false){const saved=user()?.watchlist.includes(c.id),pos=user()?.history[c.id]||0;return `<article class="card"><button class="card-open" data-act="detail" data-id="${c.id}"><div class="artwrap"><img src="${art(c)}" alt="${esc(c.title)} 샘플 아트워크" loading="lazy"><span class="art-title">${esc(c.title)}</span>${progress?`<div class="progress"><span style="width:${Math.min(100,pos/(c.duration||2520)*100)}%"></span></div>`:''}</div><div class="card-title">${esc(c.title)}</div><div class="meta">${progress?time(pos)+'부터 이어보기':`${esc(c.year)} · ${c.type==='series'?'시리즈':'영화'} · ${esc(c.genre)}${resLabel(c)?' · '+resLabel(c):''}`}</div></button><button class="card-save ${saved?'saved':''}" data-act="watchlist" data-id="${c.id}" aria-label="${esc(c.title)} ${saved?'찜 해제':'찜 추가'}" aria-pressed="${!!saved}">${saved?'✓':'+'}</button></article>`;}
+function card(c,progress=false){const saved=viewingUser()?.watchlist.includes(c.id),pos=viewingUser()?.history[c.id]||0;return `<article class="card"><button class="card-open" data-act="detail" data-id="${c.id}"><div class="artwrap"><img src="${art(c)}" alt="${esc(c.title)} 샘플 아트워크" loading="lazy"><span class="art-title">${esc(c.title)}</span>${progress?`<div class="progress"><span style="width:${Math.min(100,pos/(c.duration||2520)*100)}%"></span></div>`:''}</div><div class="card-title">${esc(c.title)}</div><div class="meta">${progress?time(pos)+'부터 이어보기':`${esc(c.year)} · ${c.type==='series'?'시리즈':'영화'} · ${esc(c.genre)}${resLabel(c)?' · '+resLabel(c):''}`}</div></button><button class="card-save ${saved?'saved':''}" data-act="watchlist" data-id="${c.id}" aria-label="${esc(c.title)} ${saved?'찜 해제':'찜 추가'}" aria-pressed="${!!saved}">${saved?'✓':'+'}</button></article>`;}
 function rail(title,items,progress=false){return `<section class="rail"><div class="rail-head"><h2>${title}</h2><a href="#${progress?'my':'search'}">더 보기 →</a></div>${items.length?`<div class="cards">${items.slice(0,5).map(c=>card(c,progress)).join('')}</div>`:empty('아직 콘텐츠가 없습니다','이야기를 둘러보고 나만의 목록을 채워 보세요.','<a class="btn small" href="#search">콘텐츠 둘러보기</a>')}</section>`;}
 function popularity(at=Date.now()){
  const cutoff=at-7*86400000, totals=new Map();
@@ -84,8 +149,8 @@ function recordWatch(seconds){
  if(row)row.seconds+=seconds;else db.popularitySamples.push({member:user().id,content:player.content,seconds,time:stamp});
 }
 function recommended(){if(!user()||!Object.keys(user().history).length||db.recommendationFailure)return fallbackContents();const order=user().id==='b'?['c4','c6','c3','c2','c5']:['c1','c2','c5','c3','c4'];const list=order.map(pick).filter(c=>c?.published);return list.length?list:fallbackContents();}
-function hero(c,detail=false){return `<section class="hero"><img class="hero-art" src="${art(c)}" alt=""><div class="hero-copy"><div class="eyebrow">${detail?'ORIGINAL STORY':'THIS WEEK / FEATURED STORY'}</div><h1>${esc(c.title)}</h1><div class="meta">${esc(c.year)} · ${esc(c.rating)} · ${esc(c.genre)}${c.type==='series'?' · 시즌 '+new Set(c.episodes.map(e=>e.season)).size+'개':''}${resLabel(c)?' · '+resLabel(c)+' · '+time(c.duration):''}</div><p>${esc(c.description)}</p><div class="actions">${detail?btn((user()?.history[c.id]?'이어서 감상':'재생하기')+' ▶','play','primary',`data-id="${c.id}"`)+btn((user()?.watchlist.includes(c.id)?'✓ 찜한 콘텐츠':'+ 찜하기'),'watchlist','',`data-id="${c.id}"`):btn('상세 보기','detail','primary',`data-id="${c.id}"`)}</div></div></section>`;}
-function home(){const list=publics(),featured=list.find(c=>c.id==='c1')||list[0];return nav('home')+`<main class="container">${featured?hero(featured):empty('새로운 이야기를 준비 중입니다','공개된 콘텐츠가 곧 표시됩니다.')}${user()&&Object.keys(user().history).length&&!db.recommendationFailure?rail(`${esc(user().nickname)}님을 위한 추천`,recommended()):''}${user()?rail('이어서 감상하기',Object.keys(user().history).sort((a,b)=>(user().recent?.indexOf(a)??99)-(user().recent?.indexOf(b)??99)).map(pick).filter(c=>c?.published),true):''}${rail('새로 공개된 이야기',[...list].sort((a,b)=>b.created-a.created))}${rail(popularContents().length?'지금 인기 있는 콘텐츠':'인기 데이터 준비 중 · 새로 공개된 이야기',fallbackContents())}${user()?rail('내가 찜한 콘텐츠',user().watchlist.map(pick).filter(c=>c?.published)):''}</main>`+footer();}
+function hero(c,detail=false){return `<section class="hero"><img class="hero-art" src="${art(c)}" alt=""><div class="hero-copy"><div class="eyebrow">${detail?'ORIGINAL STORY':'THIS WEEK / FEATURED STORY'}</div><h1>${esc(c.title)}</h1><div class="meta">${esc(c.year)} · ${esc(c.rating)} · ${esc(c.genre)}${c.type==='series'?' · 시즌 '+new Set(c.episodes.map(e=>e.season)).size+'개':''}${resLabel(c)?' · '+resLabel(c)+' · '+time(c.duration):''}</div><p>${esc(c.description)}</p><div class="actions">${detail?btn((viewingUser()?.history[c.id]?'이어서 감상':'재생하기')+' ▶','play','primary',`data-id="${c.id}"`)+btn((viewingUser()?.watchlist.includes(c.id)?'✓ 찜한 콘텐츠':'+ 찜하기'),'watchlist','',`data-id="${c.id}"`):btn('상세 보기','detail','primary',`data-id="${c.id}"`)}</div></div></section>`;}
+function home(){const list=publics(),featured=list.find(c=>c.id==='c1')||list[0];return nav('home')+`<main class="container">${featured?hero(featured):empty('새로운 이야기를 준비 중입니다','공개된 콘텐츠가 곧 표시됩니다.')}${user()&&Object.keys(viewingUser().history).length&&!db.recommendationFailure?rail(`${esc(user().nickname)}님을 위한 추천`,recommended()):''}${user()?rail('이어서 감상하기',Object.keys(viewingUser().history).sort((a,b)=>(viewingUser().recent?.indexOf(a)??99)-(viewingUser().recent?.indexOf(b)??99)).map(pick).filter(c=>c?.published),true):''}${rail('새로 공개된 이야기',[...list].sort((a,b)=>b.created-a.created))}${rail(popularContents().length?'지금 인기 있는 콘텐츠':'인기 데이터 준비 중 · 새로 공개된 이야기',fallbackContents())}${user()?rail('내가 찜한 콘텐츠',viewingUser().watchlist.map(pick).filter(c=>c?.published)):''}</main>`+footer();}
 function login(){return nav()+`<main class="auth"><section class="auth-panel"><div class="eyebrow">YOUR NEXT STORY</div><h1>다음 이야기를<br>만나보세요</h1><p>소셜 계정으로 간편하게 시작하고<br>좋아하는 콘텐츠를 이어서 감상하세요.</p>${btn('소셜로 시작하기','social','primary full')}<p style="font-size:13px;margin:8px 0 28px">처음 이용하는 경우 인증 후 닉네임을 설정하면 가입이 완료됩니다.</p><a href="#home" class="muted">← 공개 콘텐츠 둘러보기</a></section></main>`;}
 function signup(){return nav()+`<main class="auth"><section class="auth-panel"><div class="eyebrow">소셜 인증 완료 · 시연</div><h1>어떻게 불러드릴까요?</h1><p>콘텐츠를 감상하기 전에 닉네임을 설정해 주세요.</p><form id="signup-form" novalidate><div class="field"><label for="nickname">닉네임 *</label><input id="nickname" name="nickname" autocomplete="nickname" placeholder="사용할 닉네임"><div class="error" id="signup-error" aria-live="polite"></div></div><button class="btn primary full" type="submit">가입 완료하고 시작하기</button></form><p style="font-size:13px;margin:15px 0 0">닉네임은 내 정보에서 변경할 수 있습니다.</p></section></main>`;}
 function initials(str){const a='ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';return [...str].map(c=>{const n=c.charCodeAt(0)-44032;return n>=0&&n<=11171?a[Math.floor(n/588)]:c;}).join('');}
@@ -94,7 +159,18 @@ function searchResults(){const list=publics().filter(matches),typo=/항러|항�
 function search(){return nav('search')+`<main class="container"><h1 class="section-title">어떤 이야기를 찾고 있나요?</h1><label for="search-q">제목·출연진·장르·태그 검색 · 초성 검색 지원</label><input class="searchbox" id="search-q" placeholder="새로운 이야기를 찾아보세요" value="${esc(searchState.q)}"><div class="filters"><select id="type-filter" aria-label="콘텐츠 유형">${[['all','전체 유형'],['movie','영화'],['series','시리즈']].map(([v,n])=>`<option value="${v}" ${searchState.type===v?'selected':''}>${n}</option>`).join('')}</select><select id="genre-filter" aria-label="장르">${['all',...new Set(publics().map(c=>c.genre))].map(v=>`<option value="${esc(v)}" ${searchState.genre===v?'selected':''}>${v==='all'?'전체 장르':esc(v)}</option>`).join('')}</select>${btn('조건 초기화','clear-search','small ghost')}</div><section id="results" class="spaced">${searchResults()}</section></main>`+footer();}
 function detail(id){const c=pick(id);if(!c?.published)return nav()+`<main class="container">${empty('볼 수 없는 콘텐츠입니다','비공개되었거나 삭제된 콘텐츠입니다.','<a class="btn" href="#home">홈으로</a>')}</main>`;const seasons=[...new Set(c.episodes.filter(e=>e.published).map(e=>e.season))],season=Number(new URLSearchParams(location.hash.split('?')[1]).get('season')||seasons[0]||1);return nav()+`<main class="container">${hero(c,true)}<p class="muted spaced">출연 ${esc(c.actors)} · 태그 ${esc(c.tags)}</p>${c.type==='series'?`<div class="rail-head spaced"><h2>에피소드</h2><select id="season-select" data-id="${c.id}" style="width:160px" aria-label="시즌">${seasons.map(n=>`<option ${n===season?'selected':''} value="${n}">시즌 ${n}</option>`).join('')}</select></div><div class="detail-episodes">${c.episodes.filter(e=>e.published&&e.season===season).sort((a,b)=>a.no-b.no).map(e=>`<button class="episode" data-act="play" data-id="${c.id}" data-episode="${e.id}"><img src="${art(c)}" alt="${esc(e.title)}"><h3>${e.no}화 ${esc(e.title)}</h3><p class="meta">42분 · ${esc(c.description)}</p></button>`).join('')}</div>`:''}</main>`+footer();}
 const time=n=>`${Math.floor(n/60).toString().padStart(2,'0')}:${Math.floor(n%60).toString().padStart(2,'0')}`;
-function savePosition(){if(user()&&player.content){user().history[player.content]=Math.floor(player.position);user().recent=[player.content,...(user().recent||[]).filter(id=>id!==player.content)];persist();}}
+function savePosition(){
+ if(stateActor() && media){
+   if(player.status!=='ready' || media.actor!==stateActor() || !memberToken(media.actor))return;
+   const id=media.id, token=memberToken(media.actor);
+   const positionMs=Math.min(media.durationMs, Math.round(media.video.currentTime*1000));
+   enqueue(async()=>{
+     await stateRequest(token,'/progress/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({positionMs}),keepalive:true});
+     if(!location.hash.startsWith('#player/')) { await refreshState(); refreshOutsidePlayer(); }
+   });
+   return;
+ }
+ if(user()&&player.content){user().history[player.content]=Math.floor(player.position);user().recent=[player.content,...(user().recent||[]).filter(id=>id!==player.content)];persist();}}
 function stopPlayer(){clearInterval(playTimer);playTimer=null;if(player.content){savePosition();if(player.playing)event('exit');}player.playing=false;detachMedia();}
 // 스트리밍 서버 영상 재생 ---------------------------------------------------------------------
 // 스트리밍 서버에서 재생 정보, HLS 재생 목록, 영상 조각을 받는다.
@@ -102,21 +178,40 @@ function detachMedia(){if(!media)return;try{media.hls?.destroy();media.video.pau
 function mediaError(message){player.status='error';player.message=message;player.playing=false;updatePlayer();toast(message);}
 async function attachMedia(id){
  const c=pick(id),video=$('#video');if(!c?.cms||!video)return;
- detachMedia();media={video,hls:null,id};player.status='loading';player.message='';updatePlayer();
+ detachMedia();
+ const session = {video,hls:null,id,actor:stateActor()};
+ media=session;player.status='loading';player.message='';updatePlayer();
  video.volume=player.volume;video.playbackRate=player.speed;
- const mine=()=>media?.video===video;
+ const mine=()=>media===session;
  video.addEventListener('loadedmetadata',()=>{if(!mine())return;if(Number.isFinite(video.duration))player.duration=video.duration;if(player.position>0&&player.position<player.duration-1)video.currentTime=player.position;else player.position=0;player.status='ready';updatePlayer();});
  video.addEventListener('timeupdate',()=>{if(!mine())return;player.position=video.currentTime;updatePlayer();});
  video.addEventListener('play',()=>{if(!mine())return;player.playing=true;video.style.background='#000';updatePlayer();});
- video.addEventListener('pause',()=>{if(!mine())return;player.playing=false;updatePlayer();});
+ video.addEventListener('pause',()=>{if(!mine())return;player.playing=false;savePosition();updatePlayer();});
  video.addEventListener('ended',()=>{if(!mine())return;player.playing=false;savePosition();event('ended');updatePlayer();});
  video.addEventListener('error',()=>{if(mine()&&!media.hls)mediaError('영상을 재생할 수 없습니다.');});
  try{
   const streamingApi=window.STREAMING_API_BASE;
-  if(!streamingApi)throw new Error('스트리밍 서버 주소가 설정되지 않았습니다.');
+  if(streamingApi == null)throw new Error('스트리밍 서버 주소가 설정되지 않았습니다.');
   const res=await fetch(`${streamingApi}/api/v1/contents/${encodeURIComponent(id)}/playback`);
   if(!res.ok)throw new Error(res.status===404?'재생할 수 없는 콘텐츠입니다.':`재생 정보를 받지 못했습니다. (${res.status})`);
   const info=await res.json(),src=streamingApi+info.manifestUrl;
+  if(!mine())return;
+  media.durationMs=info.durationMs;
+  if(media.actor){
+    await writes;
+    if(!mine())return;
+    try {
+      const progress=await stateRequest(memberToken(media.actor),'/progress/'+id,{
+        signal: AbortSignal.timeout(2500)
+      });
+      if(!mine())return;
+      player.position=(progress.resumePositionMs || 0)/1000;
+    } catch {
+      if(!mine())return;
+      player.position=0;
+      toast('이어보기 위치를 불러오지 못해 처음부터 재생할 수 있습니다.');
+    }
+  }
   if(!mine())return;                                   // 응답을 기다리는 사이 다른 화면으로 이동함
   if(window.Hls&&Hls.isSupported()){
    const hls=new Hls();media.hls=hls;
@@ -127,7 +222,7 @@ async function attachMedia(id){
  }catch(e){if(mine())mediaError(e.message);}
 }
 // ----------------------------------------------------------------------------------------------
-function startTimer(){clearInterval(playTimer);playTimer=setInterval(()=>{if(!player.playing||!user())return;recordWatch(1);if(media){if(Math.floor(player.position)%15===0){savePosition();event('progress');}return;}player.position=Math.min(2520,player.position+player.speed);updatePlayer();if(Math.floor(player.position)%15===0){savePosition();event('progress');}if(player.position>=2520){player.playing=false;savePosition();event('ended');updatePlayer();}},1000);}
+function startTimer(){clearInterval(playTimer);playTimer=setInterval(()=>{if(!player.playing||!user())return;recordWatch(1);if(media){if(player.status==='ready' && Date.now()-(media.lastSave || 0)>=15000){media.lastSave=Date.now();savePosition();event('progress');}return;}player.position=Math.min(2520,player.position+player.speed);updatePlayer();if(Math.floor(player.position)%15===0){savePosition();event('progress');}if(player.position>=2520){player.playing=false;savePosition();event('ended');updatePlayer();}},1000);}
 function updatePlayer(){const seek=$('#seek');if(!seek)return;const total=player.duration||2520;if(media)seek.max=total;seek.value=player.position;$('#time-text').textContent=time(player.position)+' / '+time(total);$('#play-toggle').textContent=player.playing?'Ⅱ 일시정지':'▶ 재생';$('#play-center').textContent=player.playing?'Ⅱ':'▶';
  if(!media){$('#play-caption').textContent=player.playing?'시연용 타임라인 재생 중':'시연용 타임라인 · 재생을 눌러 보세요';return;}
  const label=[resLabel(pick(media.id)||{}),'HLS'].filter(Boolean).join(' · ');
@@ -138,7 +233,11 @@ function playerPage(id){if(!user())return loginRequired('재생하려면 로그�
  const real=!!c.cms;   // CMS 콘텐츠면 실제 영상, 샘플 콘텐츠면 예전의 시연용 타임라인
  return nav()+`<main class="container"><a class="muted" href="#detail/${id}">← ${esc(c.title)} 상세</a><section class="player spaced"><div class="player-stage"${real?' data-act="toggle-play"':''}><img src="${art(c)}" alt="${real?'':'시연용 영상 자리'}">${real?'<video id="video" playsinline preload="metadata" style="position:absolute;inset:0;z-index:1;width:100%;height:100%;object-fit:contain"></video>':''}<div class="player-center" id="player-center"><button id="play-center" class="playbig" data-act="toggle-play" aria-label="재생 또는 일시정지">▶</button><p class="player-caption" id="play-caption">${real?'재생 정보를 불러오는 중…':'시연용 타임라인 · 재생을 눌러 보세요'}</p></div></div><div class="player-controls"><label for="seek" class="sr-label">재생 위치</label><input id="seek" type="range" min="0" max="${real?Math.max(1,player.duration):2520}" step="${real?'0.1':'1'}" value="${player.position}"><div class="play-row">${btn('▶ 재생','toggle-play','small','id="play-toggle"')}${btn('-10초','seek-back','small')}${btn('+10초','seek-forward','small')}<span class="time meta" id="time-text">${time(player.position)} / ${time(player.duration||2520)}</span><label for="volume" style="margin:0;font-size:12px">음량</label><input class="volume" id="volume" type="range" min="0" max="1" step="0.1" value="${player.volume}"><select id="quality" aria-label="화질">${(real?['자동',resLabel(c)].filter(Boolean):['자동','1080p','720p']).map(v=>`<option ${player.quality===v?'selected':''}>${v}</option>`).join('')}</select><select id="subtitle" aria-label="자막">${['한국어','영어','끄기'].map(v=>`<option ${player.subtitle===v?'selected':''}>${v}</option>`).join('')}</select><select id="speed" aria-label="배속">${[.5,1,1.5,2].map(v=>`<option value="${v}" ${player.speed===v?'selected':''}>${v}배</option>`).join('')}</select>${btn('전체 화면','fullscreen','small')}</div><p class="caption">${real?'스트리밍 서버에서 HLS 영상을 재생합니다. 재생 위치·배속·음량은 실제로 동작하며, 화질 전환(ABR)·자막·DRM은 아직 모의 상태입니다.':'실제 영상을 연결하기 전의 시연용 플레이어입니다. 재생 위치·배속·찜·이어보기 흐름은 조작할 수 있습니다. ABR·DRM은 모의 상태입니다.'}</p></div></section></main>`;}
 function loginRequired(message){return nav()+`<main class="container">${empty('로그인이 필요합니다',message,'<a href="#login" class="btn primary">소셜로 시작하기</a>')}</main>`;}
-function my(){if(!user())return loginRequired('나만의 콘텐츠 목록을 확인해 보세요.');let list=myTab==='watchlist'?user().watchlist.map(pick):Object.keys(user().history).sort((a,b)=>(user().recent?.indexOf(a)??99)-(user().recent?.indexOf(b)??99)).map(pick);list=list.filter(c=>c?.published);return nav('my')+`<main class="container"><h1 class="section-title">내 콘텐츠</h1><section class="panel profile"><div><h2>${esc(user().nickname)}</h2><p class="muted spaced" style="margin-top:8px">나만의 이야기와 감상 기록</p></div><div class="actions">${btn('닉네임 수정','nickname')}${btn('로그아웃','logout')}</div></section><div class="tabs">${[['watchlist','찜한 콘텐츠'],['recent','최근 시청'],['continue','이어보기']].map(([v,l])=>btn(l,'my-tab',myTab===v?'active':'',`data-value="${v}"`)).join('')}</div>${list.length?`<div class="cards">${list.map(c=>card(c,myTab==='continue')).join('')}</div>`:empty('아직 목록이 비어 있습니다','새로운 이야기를 감상하거나 찜해 보세요.','<a href="#search" class="btn">콘텐츠 둘러보기</a>')}</main>`+footer();}
+function my(){if(!user())return loginRequired('나만의 콘텐츠 목록을 확인해 보세요.');
+ const tabs = [['watchlist','찜한 콘텐츠'],['continue','이어보기']];
+ if(!stateActor()) tabs.splice(1,0,['recent','최근 시청']);
+ if(!tabs.some(([id])=>id===myTab)) myTab='continue';
+ let list=myTab==='watchlist'?viewingUser().watchlist.map(pick):Object.keys(viewingUser().history).sort((a,b)=>(viewingUser().recent?.indexOf(a)??99)-(viewingUser().recent?.indexOf(b)??99)).map(pick);list=list.filter(c=>c?.published);return nav('my')+`<main class="container"><h1 class="section-title">내 콘텐츠</h1><section class="panel profile"><div><h2>${esc(user().nickname)}</h2><p class="muted spaced" style="margin-top:8px">나만의 이야기와 감상 기록</p></div><div class="actions">${btn('닉네임 수정','nickname')}${btn('로그아웃','logout')}</div></section><div class="tabs">${tabs.map(([v,l])=>btn(l,'my-tab',myTab===v?'active':'',`data-value="${v}"`)).join('')}</div>${list.length?`<div class="cards">${list.map(c=>card(c,myTab==='continue')).join('')}</div>`:empty('아직 목록이 비어 있습니다','새로운 이야기를 감상하거나 찜해 보세요.','<a href="#search" class="btn">콘텐츠 둘러보기</a>')}</main>`+footer();}
 function live(){const list=db.channels.filter(c=>c.published);if(!list.find(c=>c.id===liveChannel))liveChannel=list[0]?.id;const channel=list.find(c=>c.id===liveChannel),programs=db.programs.filter(p=>p.channel===liveChannel).sort((a,b)=>a.start.localeCompare(b.start));return nav('live')+`<main class="container"><h1>지금 라이브</h1><div class="tabs">${list.map(c=>btn('CH · '+esc(c.name),'channel',c.id===liveChannel?'active':'',`data-id="${c.id}"`)).join('')}</div>${channel?`<div class="live-grid"><div><div class="player"><div class="player-stage"><img src="assets/art-3.svg" alt="라이브 샘플 자리"><div class="player-center">${btn(user()?'라이브 시연 시작 ▶':'로그인 후 시청','live-play','primary')}<p class="player-caption">외부 스트림 연결 전 · 편성 시각 예시 14:30</p></div></div></div><h2 class="spaced">${esc(channel.name)}</h2><p class="muted spaced">${esc(channel.description)}</p></div><aside class="panel"><h2>편성표</h2>${programs.length?programs.map((p,i)=>`<div class="schedule-item"><div class="meta">${esc(p.start)} - ${esc(p.end)}</div><h3>${i===0?'지금 · ':i===1?'다음 · ':''}${esc(p.title)}</h3></div>`).join(''):empty('편성된 방송이 없습니다','다른 채널을 선택해 주세요.')}</aside></div>`:empty('공개된 채널이 없습니다','방송을 준비하고 있습니다.')}</main>`+footer();}
 function adminShell(section,body){if(!isAdmin())return nav()+`<main class="container">${empty('관리자 권한이 필요합니다','소셜 인증과 관리자 권한은 별도로 확인합니다. 시연 도구에서 관리자 시나리오를 선택할 수 있습니다.',btn('시연 도구','demo'))}</main>`;return `<div class="admin-app"><header class="admin-top"><a class="brand" href="#admin/contents">OTT <span>PROJECT</span></a><span class="page-location">콘텐츠 운영</span><div class="navuser"><span>${esc(user().nickname)}</span><a href="#home" class="btn small">시청자 화면</a>${btn('로그아웃','logout','small ghost')}</div></header><div class="admin-grid"><nav class="sidebar" aria-label="관리자 메뉴">${[['contents','콘텐츠'],['jobs','영상 처리'],['curation','인기 콘텐츠'],['live','라이브 운영'],['recommendations','추천·학습'],['audit','감사 로그']].map(([v,l])=>`<a class="${section===v?'active':''}" href="#admin/${v}">${l}</a>`).join('')}</nav><main class="workspace">${body}</main></div></div>`;}
 function heading(title,action=''){return `<div class="page-head"><h1>${title}</h1><div class="actions">${action}</div></div>`;}
@@ -169,15 +268,25 @@ function publish(id){const c=get(id);if(!c)return;if(!c.published){const ready=c
 function runJob(j){if(j.status==='처리 중')return;j.status='처리 중';j.error='';persist();render();setTimeout(()=>{j.status='완료';const c=get(j.content);if(c){const target=j.episode?c.episodes.find(e=>e.id===j.episode):c;if(target){target.ready=true;target.video=j.filename||target.video||'sample.mp4';}audit('영상 처리 완료',c.id,{ready:false},{ready:true});}persist();if(location.hash.startsWith('#admin'))render();toast('모의 영상 처리가 완료되었습니다.');},1800);}
 function training(fail=false){const start=$('#train-start')?.value,end=$('#train-end')?.value;if(!start||!end||start>end)return toast('올바른 데이터 기간을 선택해 주세요.');if(db.training.some(t=>t.status==='진행 중'))return toast('학습 작업이 이미 진행 중입니다.');const t={id:'TRAIN-'+(15+db.training.length),data:'DATA-'+(++db.dataVersion),model:null,status:'진행 중'};db.training.push(t);persist();render();setTimeout(()=>{t.status=fail?'실패':'완료';if(!fail){t.model='MODEL-'+(8+db.training.filter(x=>x.status==='완료').length).toString().padStart(3,'0');db.model=t.model;}audit('추천 학습 '+t.status,t.id,null,{model:db.model,status:t.status});if(location.hash==='#admin/recommendations')render();toast(fail?'학습 실패 · 기존 정상 모델을 유지합니다.':'모의 학습 완료 · 모델 버전을 갱신했습니다.');},1800);}
 function render(){const path=location.hash.slice(1)||'home',parts=path.split('?')[0].split('/');if(parts[0]!=='player'&&player.content){stopPlayer();player.content=null;}closeModal();let html;if(parts[0]==='home')html=home();else if(parts[0]==='login')html=login();else if(parts[0]==='signup')html=signup();else if(parts[0]==='search')html=search();else if(parts[0]==='detail')html=detail(parts[1]);else if(parts[0]==='player')html=playerPage(parts[1]);else if(parts[0]==='my')html=my();else if(parts[0]==='live')html=live();else if(parts[0]==='admin'){html=!isAdmin()?adminShell('contents',''):parts[1]==='edit'?editor(parts[2]):({contents:adminContents,jobs,curation,live:adminLive,recommendations,audit:auditPage}[parts[1]]||adminContents)();}else html=home();$('#app').innerHTML=html+demoBar();document.title=`OTT PROJECT · ${parts[0]==='admin'?'관리자 목업':'클릭형 목업'}`;if(parts[0]==='player'&&user()){updatePlayer();startTimer();attachMedia(parts[1]);}window.scrollTo(0,0);}
-document.addEventListener('click',e=>{const el=e.target.closest('[data-act]');if(!el)return;const a=el.dataset.act,id=el.dataset.id,v=el.dataset.value;const adminActions=['new-content','publish','delete-content','edit-tab','new-episode','edit-episode','episode-publish','delete-episode','retry-job','new-channel','edit-channel','delete-channel','new-program','edit-program','delete-program','train','train-fail','export-events','audit-detail','subtitle-toggle'];if(adminActions.includes(a)&&!isAdmin())return toast('관리자 권한이 필요합니다.');
+document.addEventListener('click',async e=>{const el=e.target.closest('[data-act]');if(!el)return;const a=el.dataset.act,id=el.dataset.id,v=el.dataset.value;const adminActions=['new-content','publish','delete-content','edit-tab','new-episode','edit-episode','episode-publish','delete-episode','retry-job','new-channel','edit-channel','delete-channel','new-program','edit-program','delete-program','train','train-fail','export-events','audit-detail','subtitle-toggle'];if(adminActions.includes(a)&&!isAdmin())return toast('관리자 권한이 필요합니다.');
  if(a==='close')closeModal();else if(a==='help')help();else if(a==='demo')demo();else if(a==='detail')go('detail/'+id);else if(a==='content-list')go('admin/contents');
  else if(a==='social')modal('소셜 인증 · 모의 화면',`<span class="mock-label">외부 서비스 연결 없음</span><p class="muted spaced">인증 완료 후 ${demoActor==='new'?'닉네임 설정 화면':'기존 회원 홈'}으로 이동합니다. 실제 계정 정보를 입력하지 마세요.</p><div class="actions">${btn('인증 완료','social-success','primary')}${btn('인증 취소','social-cancel')}${btn('실패 시연','social-fail')}</div>`);
- else if(a==='social-success'){closeModal();if(demoActor==='new')go('signup');else{db.current=demoActor;persist();go('home');toast('로그인되었습니다.');}}
+ else if(a==='social-success'){closeModal();if(demoActor==='new')go('signup');else{if(window.STATE_API_BASE != null && !(await authorizeActor(demoActor)))return;db.current=demoActor;persist();go('home');toast('로그인되었습니다.');if(stateActor())refreshAfterLogin();}}
  else if(a==='social-cancel'){closeModal();toast('로그인이 취소되었습니다. 계정을 생성하지 않았습니다.');}
  else if(a==='social-fail'){closeModal();toast('로그인을 완료하지 못했습니다. 다시 시도해 주세요.');}
- else if(a==='scenario'){stopPlayer();demoActor=v;db.current=v==='new'?null:v;persist();closeModal();go(v==='new'?'login':v==='admin'?'admin/contents':'home');toast(v==='new'?'신규 회원 시나리오입니다.':'샘플 계정으로 시연을 시작합니다.');}
- else if(a==='logout'||a==='expire'){stopPlayer();db.current=null;demoActor='a';persist();go('login');toast(a==='expire'?'로그인이 만료되었습니다. 다시 로그인해 주세요.':'로그아웃했습니다.');}
- else if(a==='watchlist'){if(!user()){toast('찜하려면 로그인해 주세요.');return go('login');}const list=user().watchlist,idx=list.indexOf(id);idx<0?list.push(id):list.splice(idx,1);persist();render();toast(idx<0?'찜 목록에 추가했습니다.':'찜 목록에서 제거했습니다.');}
+ else if(a==='scenario'){if(window.STATE_API_BASE != null && !(await authorizeActor(v)))return;stopPlayer();demoActor=v;db.current=v==='new'?null:v;persist();closeModal();go(v==='new'?'login':v==='admin'?'admin/contents':'home');if(stateActor())refreshAfterLogin();toast(v==='new'?'신규 회원 시나리오입니다.':'샘플 계정으로 시연을 시작합니다.');}
+ else if(a==='logout'||a==='expire'){stopPlayer();if(stateActor()){sessionStorage.removeItem('ott-token-'+db.current);stateViews.delete(db.current);}db.current=null;demoActor='a';persist();go('login');toast(a==='expire'?'로그인이 만료되었습니다. 다시 로그인해 주세요.':'로그아웃했습니다.');}
+ else if(a==='watchlist'){if(!user()){toast('찜하려면 로그인해 주세요.');return go('login');}if(stateActor() && pick(id)?.cms){
+   const actor=stateActor(), token=memberToken(actor);
+   return enqueue(async()=>{
+     const list=stateView(actor).watchlist;
+     const method=list.includes(id)?'DELETE':'PUT';
+     await stateRequest(token,'/watchlist/'+id,{method});
+     const latest = stateView(actor).watchlist.filter(value=>value!==id);
+     stateView(actor).watchlist = method==='DELETE' ? latest : [id, ...latest];
+     if(stateActor()===actor)refreshOutsidePlayer();
+   });
+ }const list=user().watchlist,idx=list.indexOf(id);idx<0?list.push(id):list.splice(idx,1);persist();render();toast(idx<0?'찜 목록에 추가했습니다.':'찜 목록에서 제거했습니다.');}
  else if(a==='play'){if(!user()){toast('재생하려면 로그인해 주세요.');return go('login');}selectedEpisode=el.dataset.episode||null;go('player/'+id);}
  else if(a==='toggle-play'){if(media){if(player.status==='error')return attachMedia(media.id);if(player.status!=='ready')return;const willPlay=media.video.paused;if(willPlay)media.video.play().catch(()=>mediaError('영상을 재생할 수 없습니다.'));else media.video.pause();savePosition();event(willPlay?'play':'pause');}else{player.playing=!player.playing;savePosition();event(player.playing?'play':'pause');updatePlayer();}}
  else if(a==='seek-back'||a==='seek-forward'){player.position=Math.max(0,Math.min(player.duration||2520,player.position+(a==='seek-back'?-10:10)));if(media&&player.status==='ready')media.video.currentTime=player.position;savePosition();event('seek');updatePlayer();}
@@ -218,7 +327,7 @@ document.addEventListener('submit',e=>{e.preventDefault();const form=e.target,fd
 });
 document.addEventListener('input',e=>{if(e.target.id==='search-q'){searchState.q=e.target.value;catalogLimit=10;$('#results').innerHTML=searchResults();}else if(e.target.id==='admin-search')$('#content-table').innerHTML=contentTable();else if(e.target.id==='seek'){player.position=Number(e.target.value);if(media&&player.status==='ready')media.video.currentTime=player.position;savePosition();updatePlayer();}else if(e.target.id==='volume'){player.volume=Number(e.target.value);if(media)media.video.volume=player.volume;}});
 document.addEventListener('change',e=>{const el=e.target;if(el.id==='type-filter'||el.id==='genre-filter'){searchState[el.id==='type-filter'?'type':'genre']=el.value;$('#results').innerHTML=searchResults();}else if(['admin-type','admin-public'].includes(el.id))$('#content-table').innerHTML=contentTable();else if(el.id==='season-select')go('detail/'+el.dataset.id+'?season='+el.value);else if(el.id==='episode-media'){selectedEpisode=el.value;render();}else if(el.id==='speed'){player.speed=Number(el.value);if(media)media.video.playbackRate=player.speed;toast(media?'재생 속도를 변경했습니다.':'시연 타임라인 배속을 변경했습니다.');}else if(el.id==='quality'||el.id==='subtitle'){player[el.id]=el.value;toast(el.id==='quality'?'화질 선택 상태를 변경했습니다. 실제 ABR은 모의 처리입니다.':'자막 선택 상태를 변경했습니다.');}else if(el.id==='volume'){player.volume=Number(el.value);if(media)media.video.volume=player.volume;}else if(['video-upload','image-upload'].includes(el.id)){if(!isAdmin())return;const file=el.files[0],c=get(el.dataset.id);if(!file||!c)return;if(el.id==='video-upload'){if(!/\.mp4$/i.test(file.name))return toast('MP4 형식만 등록할 수 있습니다.');const job={id:uid('job'),content:c.id,episode:c.type==='series'?selectedEpisode:null,status:'대기',resolution:'1080p',error:'',filename:file.name};if(c.type==='series'&&!selectedEpisode)return toast('에피소드를 먼저 추가해 주세요.');db.jobs.unshift(job);audit('원본 등록',c.id,null,{filename:file.name});toast('원본을 등록했습니다. 모의 영상 처리를 시작합니다.');runJob(job);}else{if(!file.type.startsWith('image/'))return toast('이미지 파일을 선택해 주세요.');audit('대표 이미지 교체',c.id,{filename:c.image},{filename:file.name});c.image=file.name;c.art=(c.art+1)%6;persist();render();toast('샘플 대표 이미지로 교체했습니다.');}}});
-document.addEventListener('click',e=>{if(e.target.classList.contains('modal-backdrop'))closeModal();});
+document.addEventListener('click',async e=>{if(e.target.classList.contains('modal-backdrop'))closeModal();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();if(e.key==='Tab'&&$('.modal')){const list=$$('button,a,input,select,textarea',$('.modal')).filter(n=>!n.disabled&&n.getClientRects().length);const first=list[0],last=list.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}});
 window.addEventListener('hashchange',render);window.addEventListener('beforeunload',savePosition);
 persist();render();loadCms();

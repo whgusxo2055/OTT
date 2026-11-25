@@ -9,6 +9,7 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>user-state-server</module>
         <module>cms</module>
         <module>streaming-server</module>
     </modules>

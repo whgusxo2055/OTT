@@ -12,3 +12,5 @@ const cmsOrigin = new URL(CMS_SERVER || location.href);
 window.STREAMING_API_BASE = STREAMING_SERVER || (
   cmsOrigin.hostname ? `${cmsOrigin.protocol}//${cmsOrigin.hostname}:8081` : null
 );
+
+window.STATE_API_BASE = cmsOrigin.hostname ? `${cmsOrigin.protocol}//${cmsOrigin.hostname}:8082` : null;
